@@ -1,2 +1,6 @@
 test_results.xml
-
+.coverage
+coverage_html
+*.pyc
+**/__pycache__
+test_results.html
