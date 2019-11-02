@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "pycon-2019-demo"
+version = "0.1.0"
+description = ""
+authors = ["Hans Sebastian <hans@julofinance.com>"]
+
+[tool.poetry.dependencies]
+Flask = "1.1.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^3.0"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
