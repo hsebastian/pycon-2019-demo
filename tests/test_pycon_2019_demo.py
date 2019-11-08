@@ -15,7 +15,7 @@ def test_version2():
     import time
 
     assert __version__ == "0.1.0"
-    time.sleep(4)
+    time.sleep(3.2)
 
 
 def test_models():
