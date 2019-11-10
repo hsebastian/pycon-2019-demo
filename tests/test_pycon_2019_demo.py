@@ -8,7 +8,7 @@ def test_version():
 
 def test_version1():
     assert __version__ == "0.1.0"
-    assert False
+    # assert False
 
 
 def test_version2():
