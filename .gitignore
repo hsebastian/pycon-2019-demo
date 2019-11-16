@@ -6,3 +6,4 @@ coverage_html
 */__pycache__
 test_results.html
 *.db
+*.log
