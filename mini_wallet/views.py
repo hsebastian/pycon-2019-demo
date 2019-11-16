@@ -16,8 +16,9 @@ app = Flask(__name__)
 app.logger.info("Just started {}".format(app.name))
 
 project_dir = os.path.dirname(os.path.abspath(__file__))
-database_file = "sqlite:///{}".format(os.path.join(project_dir, "mini_wallet.db"))
-app.config['SQLALCHEMY_DATABASE_URI'] = database_file
+# database_uri = "sqlite:///{}".format(os.path.join(project_dir, "mini_wallet.db"))
+database_uri = 'postgresql+psycopg2://mydbuser:mydbpassword@localhost/mydb'
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = True
 for key, value in app.config.items():
@@ -194,12 +195,16 @@ def disable():
         return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
     _, token = authorization.split(" ")
 
-    customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    if not customer:
-        return jsend.fail({"error": "Incorrect token"}), 401
+    # customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
+    # if not customer:
+    #     return jsend.fail({"error": "Incorrect token"}), 401
 
     is_disabled = request.form.get("is_disabled")
-    assert False
+    data = dict()
+    data["wallet"] = {
+        "status": "disabled",
+    }
+    return jsend.success(data), 201
 
 
 @app.route("/api/v1/wallet", methods=["GET"])
@@ -223,13 +228,18 @@ def deposit():
         return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
     _, token = authorization.split(" ")
 
-    customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    if not customer:
-        return jsend.fail({"error": "Incorrect token"}), 401
+    # customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
+    # if not customer:
+    #     return jsend.fail({"error": "Incorrect token"}), 401
 
-    amount = request.fdb.get("amount")
-    reference_id = request.fdb.get("reference_id")
-    assert False
+    # amount = request.fdb.get("amount")
+    # reference_id = request.fdb.get("reference_id")
+    data = dict()
+    data["wallet"] = {
+        "id": str(uuid.uuid4()),
+        "status": "success"
+    }
+    return jsend.success(data), 201
 
 
 @app.route("/api/v1/wallet/withdrawals", methods=["POST"])
@@ -239,17 +249,22 @@ def withdraw():
         return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
     _, token = authorization.split(" ")
 
-    customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    if not customer:
-        return jsend.fail({"error": "Incorrect token"}), 401
+    # customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
+    # if not customer:
+    #     return jsend.fail({"error": "Incorrect token"}), 401
 
-    amount = request.fdb.get("amount")
-    reference_id = request.fdb.get("reference_id")
-    assert False
+    # amount = request.fdb.get("amount")
+    # reference_id = request.fdb.get("reference_id")
+
+    data = dict()
+    data["wallet"] = {
+        "id": str(uuid.uuid4()),
+        "status": "success"
+    }
+    return jsend.success(data), 201
 
 
 ################################################################################
-
 
 class MiniWalletException(Exception):
     pass
