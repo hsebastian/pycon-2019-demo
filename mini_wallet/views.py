@@ -2,15 +2,23 @@ import datetime
 import jsend
 import logging
 import os
+import uuid
+import secrets
+from contextlib import contextmanager
+from functools import wraps
 
 from flask import Flask
 from flask import request
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import func
+from sqlalchemy import exc
+
+from webargs import fields
+from webargs.flaskparser import use_args
 
 
 logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
-
 
 app = Flask(__name__)
 app.logger.info("Just started {}".format(app.name))
@@ -21,10 +29,25 @@ database_uri = 'postgresql+psycopg2://mydbuser:mydbpassword@localhost/mydb'
 app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = True
-for key, value in app.config.items():
-    app.logger.info("{key}: {value}".format(key=key, value=value))
-
 db = SQLAlchemy(app)
+
+
+@app.before_first_request
+def initialize_db():
+    for key, value in app.config.items():
+        app.logger.info("{key}: {value}".format(key=key, value=value))
+
+    # app.logger.info("dropping DB")
+    # app.logger.info("-" * 80)
+    # db.drop_all()
+    # app.logger.info("DB droppped")
+    # app.logger.info("-" * 80)
+
+    app.logger.info("creating DB")
+    app.logger.info("-" * 80)
+    db.create_all()
+    app.logger.info("DB created")
+    app.logger.info("-" * 80)
 
 
 # https://stackoverflow.com/questions/31584974/sqlalchemy-model-django-like-save-method
@@ -45,7 +68,7 @@ class Wallet(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     created_at = db.Column(db.DateTime, server_default=func.now())
-    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, server_default=func.now())
 
     xid = db.Column(db.Text, nullable=False)  # 93de1727-943d-443e-b311-0da531a267a7
     balance = db.Column(db.Numeric, default=0, nullable=False)
@@ -67,6 +90,7 @@ class BalanceChange(db.Model):
     xid = db.Column(db.Text, nullable=False)  # 93de1727-943d-443e-b311-0da531a267a7
     amount = db.Column(db.Numeric, nullable=False)
     reference_id = db.Column(db.Text, unique=True, nullable=False)
+    type = db.Column(db.Text, nullable=False)
 
     wallet_id = db.Column(db.Integer, db.ForeignKey('wallet.id'))
     wallet = db.relationship("Wallet", back_populates="balance_change")
@@ -83,15 +107,109 @@ class StatusChange(db.Model):
     wallet_id = db.Column(db.Integer, db.ForeignKey('wallet.id'))
     wallet = db.relationship("Wallet", back_populates="status_change")
 
-app.logger.info("-" * 80)
 
-import uuid
-import secrets
-
-db.create_all()
+################################################################################
 
 
-from contextlib import contextmanager
+def create_failed_response(error_message, status_code=400, headers=None):
+    if headers:
+        return jsend.fail({"error": error_message}), status_code, headers
+    else:
+        return jsend.fail({"error": error_message}), status_code
+
+
+# https://webargs.readthedocs.io/en/latest/framework_support.html#error-handling
+@app.errorhandler(422)
+@app.errorhandler(400)
+def handle_error(err):
+    error_code = 400 if err.code == 422 else err.code
+    headers = err.data.get("headers", None)
+    messages = err.data.get("messages", ["Invalid request."])
+    return create_failed_response(messages, error_code, headers=headers)
+
+
+def validate_token(f):
+    @wraps(f)
+    def wrap(*args, **kwargs):
+
+        authorization = request.headers.get("Authorization")
+        if not authorization or not authorization.startswith("Token "):
+            app.logger.info(authorization)
+            return create_failed_response("Incorrect Authorization signature: 'Token <my token>'", 401)
+
+        _, token = authorization.split(" ")
+        customer_dict = get_customer_info_by_token(token)
+        if not customer_dict:
+            return create_failed_response("Incorrect Authorization signature: 'Token <my token>'", 401)
+
+        kwargs["customer_dict"] = customer_dict
+        return f(*args, **kwargs)
+
+    return wrap
+
+
+################################################################################
+
+
+@app.route("/api/v1/init", methods=["POST"])
+@use_args({"customer_id": fields.Str(required=True, validate=lambda p: len(p) > 0)})
+def initialize(args):
+    customer_id = args["customer_id"]
+    try:
+        data = initialize_customer(customer_id)
+    except MiniWalletException as mwe:
+        return create_failed_response(str(mwe), 500)
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet", methods=["POST"])
+@validate_token
+def enable(customer_dict):
+    data = enable_or_create(customer_dict)
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet", methods=["GET"])
+@validate_token
+def view(customer_dict):
+    data = get_balance(customer_dict)
+    return jsend.success(data), 200
+
+
+@app.route("/api/v1/wallet/deposits", methods=["POST"])
+@use_args({
+    "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
+    "reference_id": fields.Str(required=True)
+})
+@validate_token
+def deposit(args, customer_dict):
+    data = deposit_money(customer_dict, args["amount"], args["reference_id"])
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet/withdrawals", methods=["POST"])
+@use_args({
+    "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
+    "reference_id": fields.Str(required=True),
+})
+@validate_token
+def withdraw(args, customer_dict):
+    data = withdraw_money(customer_dict, args["amount"], args["reference_id"])
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet", methods=["PATCH"])
+@use_args({"is_disabled": fields.Bool(required=True, validate=lambda v: v is True)})
+@validate_token
+def disable(args, customer_dict):
+    data = disable_wallet(customer_dict)
+    return jsend.success(data), 201
+
+
+################################################################################
+
+# service layer logger
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -101,192 +219,179 @@ def enter_session():
     try:
         yield session
         session.commit()
-        app.logger.info("committed")
     except Exception as e:
         session.rollback()
-        app.logger.info(e)
+        logger.exception("commit to DB fails")
         raise e
     finally:
         session.close()
 
 
-token = secrets.token_hex(21)
-wallet_xid = str(uuid.uuid4())
-with enter_session() as session:
-    customer = Customer(xid=str(uuid.uuid4()), token=token)
-    # wallet = Wallet(xid=wallet_xid, customer=customer)
-    # app.logger.info(wallet.customer.token)
-    # app.logger.info(wallet.xid)
-
-    session.add(customer)
-    # session.add(wallet)
-
-with enter_session() as session:
-    wallet = session.query(Wallet).join(Customer).filter(Customer.token==token).one_or_none()
-    # app.logger.info(wallet.xid)
-    # app.logger.info(wallet.balance)
-    # app.logger.info(wallet.status)
-
-# with enter_session() as session:
-#     for customer in Customer.query.all():
-#         app.logger.info(customer.wallet)
-
-app.logger.info("-" * 80)
-################################################################################
-
-
-@app.route("/api/v1/init", methods=["POST"])
-def initialize_customer():
-    customer_xid = request.json["customer_xid"]
-    with enter_session() as session:
-        token = secrets.token_hex(21)
-        customer = Customer(xid=customer_xid, token=token)
-        session.add(customer)
-    return jsend.success({"token": token})
-
-
-@app.route("/api/v1/wallet", methods=["POST"])
-def enable():
-    authorization = request.headers.get("Authorization")
-    if not authorization.startswith("Token "):
-        return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
-    _, token = authorization.split(" ")
-
-    customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    if not customer:
-        return jsend.fail({"error": "Incorrect token"}), 401
-
-    data = dict()
-
-    wallet = customer.wallet
-    if not wallet:
-        wallet_xid = str(uuid.uuid4())
-        wallet = Wallet(xid=wallet_xid, customer=customer, status="enabled")
-        db.session.add(wallet)
-        status_change = StatusChange(wallet=wallet, status="enabled")
-        db.session.add(status_change)
-        wallet = Wallet.query.filter(Wallet.xid==wallet_xid).one_or_none()
-        status_change = StatusChange.query.filter(StatusChange.wallet==wallet).order_by(StatusChange.id.desc()).first()
-    else:
-        if wallet.status == "enabled":
-            return jsend.fail({"error": "Already enabled"}), 400
-
-        wallet.status = "enabled"
-        db.session.merge(wallet)
-        status_change = StatusChange(wallet=wallet, status="enabled")
-        db.session.add(status_change)
-
-    data["wallet"] = {
-        "id": wallet.xid,
-        "owned_by": customer.xid,
-        "status": wallet.status,
-        "enabled_at": status_change.created_at,
-        "balance": wallet.balance
-    }
-    db.session.commit()
-    logging.info(data)
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet", methods=["PATCH"])
-def disable():
-    authorization = request.headers.get("Authorization")
-    if not authorization.startswith("Token "):
-        return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
-    _, token = authorization.split(" ")
-
-    # customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    # if not customer:
-    #     return jsend.fail({"error": "Incorrect token"}), 401
-
-    is_disabled = request.form.get("is_disabled")
-    data = dict()
-    data["wallet"] = {
-        "status": "disabled",
-    }
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet", methods=["GET"])
-def view():
-    authorization = request.headers.get("Authorization")
-    if not authorization.startswith("Token "):
-        return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
-    _, token = authorization.split(" ")
-
-    customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    if not customer:
-        return jsend.fail({"error": "Incorrect token"}), 401
-
-    assert False
-
-
-@app.route("/api/v1/wallet/deposits", methods=["POST"])
-def deposit():
-    authorization = request.headers.get("Authorization")
-    if not authorization.startswith("Token "):
-        return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
-    _, token = authorization.split(" ")
-
-    # customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    # if not customer:
-    #     return jsend.fail({"error": "Incorrect token"}), 401
-
-    # amount = request.fdb.get("amount")
-    # reference_id = request.fdb.get("reference_id")
-    data = dict()
-    data["wallet"] = {
-        "id": str(uuid.uuid4()),
-        "status": "success"
-    }
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet/withdrawals", methods=["POST"])
-def withdraw():
-    authorization = request.headers.get("Authorization")
-    if not authorization.startswith("Token "):
-        return jsend.fail({"error": "Incorrect Authorization signature: 'Token <my token>'"}), 401
-    _, token = authorization.split(" ")
-
-    # customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
-    # if not customer:
-    #     return jsend.fail({"error": "Incorrect token"}), 401
-
-    # amount = request.fdb.get("amount")
-    # reference_id = request.fdb.get("reference_id")
-
-    data = dict()
-    data["wallet"] = {
-        "id": str(uuid.uuid4()),
-        "status": "success"
-    }
-    return jsend.success(data), 201
-
-
-################################################################################
-
 class MiniWalletException(Exception):
-    pass
+    def __init__(self, *args):
+        super().__init__(*args)
+        logger.error({"class": self.__class__.__name__, "args": args})
 
 
-def enable_or_create(customer_token):
-
-    raise MiniWalletException("todo")
-
-
-def disable(customer_token):
-    raise MiniWalletException("todo")
+def get_customer_info_by_token(token):
+    customer = db.session.query(Customer).filter(Customer.token==token).one_or_none()
+    return customer.__dict__ if customer else None
 
 
-def get_balance(customer_token):
+def initialize_customer(customer_id):
+    token = secrets.token_hex(21)
+    try:
+        with enter_session() as session:
+            customer = Customer(xid=customer_id, token=token)
+            session.add(customer)
+    except exc.IntegrityError:
+        raise MiniWalletException("customer with customer_id={} already initialized".format(customer_id))
+    return {"token": token}
 
-    raise MiniWalletException("todo")
+
+def enable_or_create(customer_dict):
+    customer_id = customer_dict["id"]
+    wallet = Wallet.query.options(joinedload(Wallet.customer)).filter_by(customer_id=customer_id).one_or_none()
+    data = dict()
+    if not wallet:
+        with enter_session() as session:
+            wallet_xid = str(uuid.uuid4())
+            wallet = Wallet(xid=wallet_xid, customer_id=customer_id)
+            session.add(wallet)
+
+            status_change = StatusChange(wallet=wallet, status="enabled")
+            session.add(status_change)
+            session.flush()
+            data["wallet"] = {
+                "xid": wallet.xid,
+                "customer": customer_dict["xid"],
+                "status": wallet.status,
+                "enabled_at": status_change.created_at,
+                "balance": int(wallet.balance)
+            }
+    else:
+        new_status = "enabled"
+        if wallet.status == new_status:
+            raise MiniWalletException("wallet with wallet_id={} already enabled".format(wallet.id))
+
+        with enter_session() as session:
+            wallet.status = new_status
+            session.merge(wallet)
+            status_change = StatusChange(wallet=wallet, status=new_status)
+            session.add(status_change)
+            session.flush()
+            data["wallet"] = {
+                "xid": wallet.xid,
+                "customer": customer_dict["xid"],
+                "status": wallet.status,
+                "enabled_at": status_change.created_at,
+                "balance": int(wallet.balance)
+            }
+    logger.debug(data)
+    return data
 
 
-def deposit(customer_token, amount, reference_id):
-    raise MiniWalletException("todo")
+def get_balance(customer_dict):
+    customer_id = customer_dict["id"]
+    wallet = Wallet.query.options(joinedload(Wallet.customer)).filter_by(customer_id=customer_id).one_or_none()
+    if not wallet:
+        raise MiniWalletException("wallet with customer_id={} not found".format(customer_id))
+    if wallet.status != "enabled":
+        raise MiniWalletException("wallet with wallet_id={} not enabled".format(wallet.id))
+    data = {
+        "wallet": {
+            "xid": wallet.xid,
+            "customer": wallet.customer.xid,
+            "status": wallet.status,
+            "balance": int(wallet.balance)
+        }
+    }
+    logger.debug(data)
+    return data
 
 
-def withdraw(customer_token, amount, reference_id):
-    raise MiniWalletException("todo")
+def deposit_money(customer_dict, amount, reference_id):
+    customer_id = customer_dict["id"]
+    data = dict()
+
+    wallet = Wallet.query.filter_by(customer_id=customer_id).with_for_update(of=Wallet).options(joinedload(Wallet.customer)).one_or_none()
+    if not wallet:
+        raise MiniWalletException("wallet with customer_id={} not found".format(customer_id))
+    if wallet.status != "enabled":
+        raise MiniWalletException("wallet with wallet_id={} not enabled".format(wallet.id))
+    try:
+        with enter_session() as session:
+            wallet.balance = wallet.balance + amount
+            session.merge(wallet)
+            balance_change_xid = str(uuid.uuid4())
+            balance_change = BalanceChange(xid=balance_change_xid, amount=amount, reference_id=reference_id, wallet=wallet, type="deposit")
+            session.add(balance_change)
+            data["deposit"] = {
+                "xid": balance_change.xid,
+                "wallet": wallet.xid,
+                "status": "completed",
+                "deposited_at": balance_change.created_at,
+                "amount": amount,
+                "reference_id": reference_id
+            }
+    except exc.IntegrityError:
+        raise MiniWalletException("deposit fails duplicate reference_id={}".format(reference_id))
+    logger.debug(data)
+    return data
+
+
+def withdraw_money(customer_dict, amount, reference_id):
+    customer_id = customer_dict["id"]
+    data = dict()
+
+    wallet = Wallet.query.filter_by(customer_id=customer_id).with_for_update(of=Wallet).options(joinedload(Wallet.customer)).one_or_none()
+    if not wallet:
+        raise MiniWalletException("wallet with customer_id={} not found".format(customer_id))
+    if wallet.status != "enabled":
+        raise MiniWalletException("wallet with wallet_id={} not enabled".format(wallet.id))
+    if amount > wallet.balance:
+        raise MiniWalletException("insufficient fund to withdraw amount={} for wallet_id={}".format(amount, wallet.id))
+    try:
+        with enter_session() as session:
+            wallet.balance = wallet.balance - amount
+            session.merge(wallet)
+            balance_change_xid = str(uuid.uuid4())
+            balance_change = BalanceChange(xid=balance_change_xid, amount=amount, reference_id=reference_id, wallet=wallet, type="withdrawal")
+            session.add(balance_change)
+            data["withdrawal"] = {
+                "xid": balance_change.xid,
+                "wallet": wallet.xid,
+                "status": "completed",
+                "deposited_at": balance_change.created_at,
+                "amount": amount,
+                "reference_id": reference_id
+            }
+    except exc.IntegrityError:
+        raise MiniWalletException("withdrawal fails duplicate reference_id={}".format(reference_id))
+    return data
+
+
+def disable_wallet(customer_dict):
+    customer_id = customer_dict["id"]
+    data = dict()
+    new_status = "disabled"
+
+    wallet = Wallet.query.filter_by(customer_id=customer_id).with_for_update(of=Wallet).options(joinedload(Wallet.customer)).one_or_none()
+    if not wallet:
+        raise MiniWalletException("wallet with customer_id={} not found".format(customer_id))
+    if wallet.status == new_status:
+        raise MiniWalletException("wallet with wallet_id={} already disabled".format(wallet.id))
+
+    with enter_session() as session:
+        wallet.status = new_status
+        session.merge(wallet)
+        status_change = StatusChange(wallet=wallet, status=new_status)
+        session.add(status_change)
+        session.flush()
+        data["wallet"] = {
+            "xid": wallet.xid,
+            "customer": wallet.customer.xid,
+            "status": wallet.status,
+            "disabled_at": status_change.created_at,
+        }
+    return data
