@@ -1,17 +1,21 @@
 black==19.10b0
 flake8==3.7.9
+ipython==7.9.0
 
 alembic==1.3.1
 Flask==1.1.1
 Flask-SQLAlchemy==2.4.1
-ipython==7.9.0
 psycopg2-binary==2.8.4
 pyjsend==0.2.2
+webargs==5.5.2
 
+alchemy-mock==0.4.3
 pytest==5.2.2
 pytest-cov==2.8.1
+pytest-docker-compose==3.1.2
 pytest-html==2.0.0
 pytest-instafail==0.4.1
 pytest-timeout==1.3.3
 pytest-watch==4.2.0
 pytest-xdist==1.30.0
+waiting==1.4.1

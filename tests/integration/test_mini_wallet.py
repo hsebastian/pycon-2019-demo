@@ -98,14 +98,11 @@ def test_end_to_end():
     # when depositing some funds,
     # then the balance is increased
     endpoint = base_url + "/api/v1/wallet/deposits"
-    form_data = {
-        "amount": 5000000,
-        "reference_id": str(uuid.uuid4())
-    }
+    form_data = {"amount": 5000000, "reference_id": str(uuid.uuid4())}
     response = requests.post(
         endpoint,
         data=form_data,
-        headers={"Authorization": "Token {token}".format(token=actual_token)}
+        headers={"Authorization": "Token {token}".format(token=actual_token)},
     )
     assert response.status_code == 201
     content = response.json()
@@ -117,14 +114,11 @@ def test_end_to_end():
     # when withdrawing an amount within the balance amount,
     # then the withdrawal is successful and remaining amount stays
     endpoint = base_url + "/api/v1/wallet/withdrawals"
-    form_data = {
-        "amount": 2000000,
-        "reference_id": str(uuid.uuid4())
-    }
+    form_data = {"amount": 2000000, "reference_id": str(uuid.uuid4())}
     response = requests.post(
         endpoint,
         data=form_data,
-        headers={"Authorization": "Token {token}".format(token=actual_token)}
+        headers={"Authorization": "Token {token}".format(token=actual_token)},
     )
     assert response.status_code == 201
     content = response.json()
@@ -154,13 +148,11 @@ def test_end_to_end():
     # when withdrawing an amount within the balance amount,
     # then the withdrawal is successful and remaining amount stays
     endpoint = base_url + "/api/v1/wallet"
-    form_data = {
-        "is_disabled": True
-    }
+    form_data = {"is_disabled": True}
     response = requests.patch(
         endpoint,
         data=form_data,
-        headers={"Authorization": "Token {token}".format(token=actual_token)}
+        headers={"Authorization": "Token {token}".format(token=actual_token)},
     )
     assert response.status_code == 201
     content = response.json()

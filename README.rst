@@ -6,3 +6,6 @@ env FLASK_APP=mini_wallet/views.py FLASK_ENV=development flask run
 
 # entering DB from psql
 psql -h localhost -p 5432 -U mydbuser -d mydb
+
+# docker image & container status
+watch 'docker image list && docker container list'

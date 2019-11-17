@@ -9,16 +9,7 @@ services:
       - POSTGRES_PASSWORD=mydbpassword
       - TZ=Asia/Jakarta
       - PGTZ=Asia/Jakarta
+    tmpfs:
+      - /var/lib/postgresql/data:rw
     ports:
       - "5432:5432"
-    # networks :
-    #   - default
-    # volumes:
-    #   - ./mvp/src/juloserver/setup_database.sql:/docker-entrypoint-initdb.d
-
-# networks:
-#   default:
-#     driver: bridge
-
-# volumes:
-#   logvolume01: {}
