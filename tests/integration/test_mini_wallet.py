@@ -8,11 +8,11 @@ def get_mini_wallet_api():
 
 
 class MiniWalletRequests:
-    def __init__(base_url):
+    def __init__(self, base_url):
         self.base_url = base_url
 
     def initialize(customer_xid):
-        response = requests.post(endpoint, json={"customer_xid": customer_xid})
+        pass
 
     def enable():
         pass
@@ -75,7 +75,8 @@ def test_end_to_end():
     # endpoint = base_url + "/api/v1/wallet"
     # customer_xid = str(uuid.uuid4())
     # response = requests.get(
-    #     endpoint, headers={"Authorization": "Token {token}".format(token=actual_token)}
+    #     endpoint,
+    #     headers={"Authorization": "Token {token}".format(token=actual_token)}
     # )
     # content = response.json()
     # error = content["data"]["error"]

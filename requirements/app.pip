@@ -7,6 +7,7 @@ Flask==1.1.1
 Flask-SQLAlchemy==2.4.1
 psycopg2-binary==2.8.4
 pyjsend==0.2.2
+sqlalchemy-utils==0.35.0
 webargs==5.5.2
 
 alchemy-mock==0.4.3

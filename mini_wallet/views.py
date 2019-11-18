@@ -1,6 +1,5 @@
 import jsend
 import logging
-import os
 import uuid
 import secrets
 from contextlib import contextmanager
@@ -22,8 +21,9 @@ logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 app = Flask(__name__)
 app.logger.info("Just started {}".format(app.name))
 
-project_dir = os.path.dirname(os.path.abspath(__file__))
+# project_dir = os.path.dirname(os.path.abspath(__file__))
 # database_uri = "sqlite:///{}".format(os.path.join(project_dir, "mini_wallet.db"))
+
 database_uri = "postgresql+psycopg2://mydbuser:mydbpassword@localhost/mydb"
 app.config["SQLALCHEMY_DATABASE_URI"] = database_uri
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
