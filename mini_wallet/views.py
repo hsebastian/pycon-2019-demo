@@ -112,111 +112,6 @@ class StatusChange(db.Model):
 ################################################################################
 
 
-def create_failed_response(error_message, status_code=400, headers=None):
-    if headers:
-        return jsend.fail({"error": error_message}), status_code, headers
-    else:
-        return jsend.fail({"error": error_message}), status_code
-
-
-# https://webargs.readthedocs.io/en/latest/framework_support.html#error-handling
-@app.errorhandler(422)
-@app.errorhandler(400)
-def handle_error(err):
-    error_code = 400 if err.code == 422 else err.code
-    headers = err.data.get("headers", None)
-    messages = err.data.get("messages", ["Invalid request."])
-    return create_failed_response(messages, error_code, headers=headers)
-
-
-def validate_token(f):
-    @wraps(f)
-    def wrap(*args, **kwargs):
-
-        authorization = request.headers.get("Authorization")
-        if not authorization or not authorization.startswith("Token "):
-            app.logger.info(authorization)
-            return create_failed_response(
-                "Incorrect Authorization signature: 'Token <my token>'", 401
-            )
-
-        _, token = authorization.split(" ")
-        customer_dict = get_customer_info_by_token(token)
-        if not customer_dict:
-            return create_failed_response(
-                "Incorrect Authorization signature: 'Token <my token>'", 401
-            )
-
-        kwargs["customer_dict"] = customer_dict
-        return f(*args, **kwargs)
-
-    return wrap
-
-
-################################################################################
-
-
-@app.route("/api/v1/init", methods=["POST"])
-@use_args({"customer_id": fields.Str(required=True, validate=lambda p: len(p) > 0)})
-def initialize(args):
-    customer_id = args["customer_id"]
-    try:
-        data = initialize_customer(customer_id)
-    except MiniWalletException as mwe:
-        return create_failed_response(str(mwe), 500)
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet", methods=["POST"])
-@validate_token
-def enable(customer_dict):
-    data = enable_or_create(customer_dict)
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet", methods=["GET"])
-@validate_token
-def view(customer_dict):
-    data = get_balance(customer_dict)
-    return jsend.success(data), 200
-
-
-@app.route("/api/v1/wallet/deposits", methods=["POST"])
-@use_args(
-    {
-        "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
-        "reference_id": fields.Str(required=True),
-    }
-)
-@validate_token
-def deposit(args, customer_dict):
-    data = deposit_money(customer_dict, args["amount"], args["reference_id"])
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet/withdrawals", methods=["POST"])
-@use_args(
-    {
-        "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
-        "reference_id": fields.Str(required=True),
-    }
-)
-@validate_token
-def withdraw(args, customer_dict):
-    data = withdraw_money(customer_dict, args["amount"], args["reference_id"])
-    return jsend.success(data), 201
-
-
-@app.route("/api/v1/wallet", methods=["PATCH"])
-@use_args({"is_disabled": fields.Bool(required=True, validate=lambda v: v is True)})
-@validate_token
-def disable(args, customer_dict):
-    data = disable_wallet(customer_dict)
-    return jsend.success(data), 201
-
-
-################################################################################
-
 # service layer logger
 logger = logging.getLogger(__name__)
 
@@ -247,15 +142,15 @@ def get_customer_info_by_token(token):
     return customer.__dict__ if customer else None
 
 
-def initialize_customer(customer_id):
+def initialize_customer(customer_xid):
     token = secrets.token_hex(21)
     try:
         with enter_session() as session:
-            customer = Customer(xid=customer_id, token=token)
+            customer = Customer(xid=customer_xid, token=token)
             session.add(customer)
     except exc.IntegrityError:
         raise MiniWalletException(
-            "customer with customer_id={} already initialized".format(customer_id)
+            "customer with customer_id={} already initialized".format(customer_xid)
         )
     return {"token": token}
 
@@ -339,6 +234,8 @@ def deposit_money(customer_dict, amount, reference_id):
     customer_id = customer_dict["id"]
     data = dict()
 
+    if amount <= 0:
+        raise MiniWalletException("amount={} must be positive".format(amount))
     wallet = (
         Wallet.query.filter_by(customer_id=customer_id)
         .with_for_update(of=Wallet)
@@ -386,6 +283,8 @@ def withdraw_money(customer_dict, amount, reference_id):
     customer_id = customer_dict["id"]
     data = dict()
 
+    if amount <= 0:
+        raise MiniWalletException("amount={} must be positive".format(amount))
     wallet = (
         Wallet.query.filter_by(customer_id=customer_id)
         .with_for_update(of=Wallet)
@@ -467,3 +366,118 @@ def disable_wallet(customer_dict):
             "disabled_at": status_change.created_at,
         }
     return data
+
+
+################################################################################
+
+
+def create_failed_response(error_message, status_code=400, headers=None):
+    if headers:
+        return jsend.fail({"error": error_message}), status_code, headers
+    else:
+        return jsend.fail({"error": error_message}), status_code
+
+
+# https://webargs.readthedocs.io/en/latest/framework_support.html#error-handling
+@app.errorhandler(422)
+@app.errorhandler(400)
+def handle_error_400(err):
+    error_code = 400 if err.code == 422 else err.code
+    headers = err.data.get("headers", None)
+    messages = err.data.get("messages", ["Invalid request."])
+    return create_failed_response(messages, error_code, headers=headers)
+
+
+@app.errorhandler(Exception)
+def handle_error_500(exception):
+    return create_failed_response(str(exception), 500)
+
+
+@app.errorhandler(MiniWalletException)
+def handle_error(exception):
+    return create_failed_response(str(exception), 400)
+
+
+def validate_token(f):
+    @wraps(f)
+    def wrap(*args, **kwargs):
+
+        authorization = request.headers.get("Authorization")
+        if not authorization or not authorization.startswith("Token "):
+            app.logger.info(authorization)
+            return create_failed_response(
+                "Incorrect Authorization signature: 'Token <my token>'", 401
+            )
+
+        _, token = authorization.split(" ")
+        customer_dict = get_customer_info_by_token(token)
+        if not customer_dict:
+            return create_failed_response(
+                "Incorrect Authorization signature: 'Token <my token>'", 401
+            )
+
+        kwargs["customer_dict"] = customer_dict
+        return f(*args, **kwargs)
+
+    return wrap
+
+
+################################################################################
+
+
+@app.route("/api/v1/init", methods=["POST"])
+@use_args({"customer_xid": fields.Str(required=True, validate=lambda cx: len(cx) > 0)})
+def initialize(args):
+    try:
+        data = initialize_customer(args["customer_xid"])
+    except MiniWalletException as mwe:
+        return create_failed_response(str(mwe), 500)
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet", methods=["POST"])
+@validate_token
+def enable(customer_dict):
+    data = enable_or_create(customer_dict)
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet", methods=["GET"])
+@validate_token
+def view(customer_dict):
+    data = get_balance(customer_dict)
+    return jsend.success(data), 200
+
+
+@app.route("/api/v1/wallet/deposits", methods=["POST"])
+@use_args(
+    {
+        "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
+        "reference_id": fields.Str(required=True),
+    }
+)
+@validate_token
+def deposit(args, customer_dict):
+    data = deposit_money(customer_dict, args["amount"], args["reference_id"])
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet/withdrawals", methods=["POST"])
+@use_args(
+    {
+        "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
+        "reference_id": fields.Str(required=True),
+    }
+)
+@validate_token
+def withdraw(args, customer_dict):
+    data = withdraw_money(customer_dict, args["amount"], args["reference_id"])
+    return jsend.success(data), 201
+
+
+@app.route("/api/v1/wallet", methods=["PATCH"])
+@use_args({"is_disabled": fields.Bool(required=True, validate=lambda v: v is True)})
+@validate_token
+def disable(args, customer_dict):
+    data = disable_wallet(customer_dict)
+    return jsend.success(data), 201
