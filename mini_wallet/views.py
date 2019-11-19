@@ -390,12 +390,9 @@ def handle_error_400(err):
 
 @app.errorhandler(Exception)
 def handle_error_500(exception):
+    if isinstance(exception, MiniWalletException):
+        return create_failed_response(str(exception), 400)
     return create_failed_response(str(exception), 500)
-
-
-@app.errorhandler(MiniWalletException)
-def handle_error(exception):
-    return create_failed_response(str(exception), 400)
 
 
 def validate_token(f):
@@ -428,10 +425,7 @@ def validate_token(f):
 @app.route("/api/v1/init", methods=["POST"])
 @use_args({"customer_xid": fields.Str(required=True, validate=lambda cx: len(cx) > 0)})
 def initialize(args):
-    try:
-        data = initialize_customer(args["customer_xid"])
-    except MiniWalletException as mwe:
-        return create_failed_response(str(mwe), 500)
+    data = initialize_customer(args["customer_xid"])
     return jsend.success(data), 201
 
 
@@ -453,7 +447,7 @@ def view(customer_dict):
 @use_args(
     {
         "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
-        "reference_id": fields.Str(required=True),
+        "reference_id": fields.Str(required=True, validate=lambda ri: len(ri) > 0),
     }
 )
 @validate_token
@@ -466,7 +460,7 @@ def deposit(args, customer_dict):
 @use_args(
     {
         "amount": fields.Integer(required=True, validate=lambda amount: amount > 0),
-        "reference_id": fields.Str(required=True),
+        "reference_id": fields.Str(required=True, validate=lambda ri: len(ri) > 0),
     }
 )
 @validate_token

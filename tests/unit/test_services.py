@@ -168,6 +168,12 @@ def test_deposit_money(wait_for_db_up):
             reference_id = str(uuid.uuid4())
             data = views.deposit_money(customer_dict, amount, reference_id)
 
+    views.disable_wallet(customer_dict)
+    amount = 3 * 1000 * 1000
+    reference_id = str(uuid.uuid4())
+    with pytest.raises(views.MiniWalletException, match="not enabled"):
+        data = views.deposit_money(customer_dict, amount, reference_id)
+
 
 def test_withdraw_money(wait_for_db_up):
 
@@ -316,3 +322,27 @@ def test_api(api_client, wait_for_db_up):
     assert response.status_code == 201
     assert data["status"] == "success"
     assert data["data"]["wallet"]["customer"] == customer_xid
+
+    response = api_client.post(
+        "/api/v1/wallet/withdrawals",
+        headers={"Authorization": "Token {}".format(token)},
+        data={"amount": -1, "reference_id": str(uuid.uuid4())},
+    )
+    data = response.get_json()
+    assert response.status_code == 400
+    assert data["status"] == "fail"
+    assert "amount" in data["data"]["error"]
+
+
+def test_api_error_handling():
+    assertion_error = AssertionError()
+    response, status_code = views.handle_error_500(assertion_error)
+    assert status_code == 500
+
+    headers = {"Connection": "keep-alive"}
+    response, status_code, response_headers = views.create_failed_response(
+        "some error message", headers=headers
+    )
+    assert response["data"]["error"] == "some error message"
+    assert status_code == 400
+    assert response_headers == headers
