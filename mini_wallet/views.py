@@ -16,10 +16,25 @@ from webargs import fields
 from webargs.flaskparser import use_args
 
 
-logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
-
 app = Flask(__name__)
-app.logger.info("Just started {}".format(app.name))
+
+
+if app.config["DEBUG"]:
+
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
+
+    from easy_profile import EasyProfileMiddleware
+
+    app.wsgi_app = EasyProfileMiddleware(app.wsgi_app)
+
+    from werkzeug.contrib.profiler import ProfilerMiddleware
+
+    app.wsgi_app = ProfilerMiddleware(
+        app.wsgi_app, sort_by=("time", "calls"), restrictions=[10]
+    )
+
+
+# app.logger.info("Just started {}".format(app.name))
 
 # project_dir = os.path.dirname(os.path.abspath(__file__))
 # database_uri = "sqlite:///{}".format(os.path.join(project_dir, "mini_wallet.db"))
