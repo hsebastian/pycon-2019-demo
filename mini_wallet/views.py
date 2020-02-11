@@ -27,7 +27,7 @@ if app.config["DEBUG"]:
 
     app.wsgi_app = EasyProfileMiddleware(app.wsgi_app)
 
-    from werkzeug.contrib.profiler import ProfilerMiddleware
+    from werkzeug.middleware.profiler import ProfilerMiddleware
 
     app.wsgi_app = ProfilerMiddleware(
         app.wsgi_app, sort_by=("time", "calls"), restrictions=[10]
